@@ -1,0 +1,87 @@
+const MongoClient = require("mongodb").MongoClient
+const ObjectId = require("mongodb").ObjectId
+const MongoError = require("mongodb").MongoError
+
+/**
+ * Ticket: Migration
+ *
+ * Update all the documents in the `movies` collection, such that the
+ * "lastupdated" field is stored as an ISODate() rather than a string.
+ *
+ * The Date.parse() method build into Javascript will prove very useful here!
+ * Refer to http://mongodb.github.io/node-mongodb-native/3.1/tutorials/crud/#bulkwrite
+ */
+
+// This leading semicolon (;) is to make this Immediately Invoked Function Expression (IIFE).
+// To read more about this type of expression, refer to https://developer.mozilla.org/en-US/docs/Glossary/IIFE
+;(async () => {
+  try {
+    // ensure you update your host information below!
+    const host = "mongodb+srv://m220student:m220password@mflix-wjgqi.mongodb.net"
+    const client = await MongoClient.connect(host, {
+      useNewUrlParser: true
+    })
+    const mflix = client.db("mflix")
+
+    const predicate = {
+      lastupdated: {
+        $exists: true,
+        $type: "string"
+      }
+    }
+    // we use the projection here to only return the _id and lastupdated fields
+    const projection = {
+      lastupdated: 1
+    }
+
+    const cursor = await mflix
+      .collection("movies")
+      .find(predicate, projection)
+      .toArray()
+    const moviesToMigrate = cursor.map(({
+      _id,
+      lastupdated
+    }) => ({
+      updateOne: {
+        filter: {
+          _id: ObjectId(_id)
+        },
+        update: {
+          $set: {
+            lastupdated: new Date(Date.parse(lastupdated))
+          },
+        },
+      },
+    }))
+    // What's the strange "\x1b[32m"? It's coloring. 31 is red, 32 is green
+    console.log(
+      "\x1b[32m",
+      `Found ${moviesToMigrate.length} documents to update`,
+    )
+    // Here's where we dispatch the bulk update. We destructure the
+    // modifiedCount key out of the result
+
+    const {
+      modifiedCount
+    } = await mflix
+      .collection("movies")
+      .bulkWrite(moviesToMigrate)
+
+    console.log("\x1b[32m", `${modifiedCount} documents updated`)
+    client.close()
+    process.exit(0)
+    }
+    catch (e) {
+      // check to see if the error was a MongoError and specifically a
+      // Invalid Operation error, meaning no documents to update
+      if (
+        e instanceof MongoError &&
+        e.message.slice(0, "Invalid Operation".length) === "Invalid Operation"
+      ) {
+        console.log("\x1b[32m", "No documents to update")
+      } else {
+        console.error("\x1b[31m", `Error during migration, ${e}`)
+      }
+      process.exit(1)
+    }
+    })()
